@@ -57,10 +57,26 @@ parser.add_argument('--precision', action='store_true', help='report precision@1
 parser.add_argument('--pretrained', action='store_true', help='use pretrained model')
 parser.add_argument('--zero_version', metavar='VERSION', default='zeroshot', type=str,
                     help='zeroshot version for training and testing (default: zeroshot)')
+parser.add_argument('--log_online', action='store_true',
+                    help='Flag. If set, run metrics are stored online in addition to offline logging. Should generally be set.')
+parser.add_argument('--wandb_key', default='<your_api_key_here>', type=str, help='API key for W&B.')
+parser.add_argument('--project', default='Sample_Project', type=str,
+                    help='Name of the project - relates to W&B project names. In --savename default setting part of the savename.')
+parser.add_argument('--group', default='Sample_Group', type=str, help='Name of the group - relates to W&B group names - all runs with same setup but different seeds are logged into one group. \
+                                                                                           In --savename default setting part of the savename.')
+parser.add_argument('--savename', default='group_plus_seed', type=str,
+                    help='Run savename - if default, the savename will comprise the project and group name (see wandb_parameters()).')
+
+
 
 def main():
     global args
     args = parser.parse_args()
+    if args.savename == 'group_plus_seed':
+        if args.log_online:
+            args.savename = args.group + '_s{}'.format(args.seed)
+        else:
+            args.savename = ''
         
     feature_file = os.path.join(args.resume_dir, 'features_zero.pickle')
     if os.path.isfile(feature_file):
@@ -77,7 +93,14 @@ def main():
         predicted_features_gallery, gt_labels_gallery, \
         predicted_features_query, gt_labels_query, \
         scores = prepare_features()
-    
+    if args.log_online:
+        import wandb
+        _ = os.system('wandb login {}'.format(args.wandb_key))
+        os.environ['WANDB_API_KEY'] = args.wandb_key
+        save_path = os.path.join(args.path_aux, 'CheckPoints', 'wandb')
+        wandb.init(project=args.project, group=args.group, name=args.savename, dir=save_path,
+                   settings=wandb.Settings(start_method='fork'))
+        wandb.config.update(vars(args))
     
     mAP_ls = [[] for _ in range(len(np.unique(gt_labels_query)))]
     for fi in range(predicted_features_query.shape[0]):
@@ -132,6 +155,10 @@ def main():
     if args.precision:
         for preci,precs in enumerate(prec_ls):
             print(str(preci)+' '+str(np.nanmean(precs))+' '+str(np.nanstd(precs)))
+    if args.log_online:
+        valid_data = {'mAPi_mean': np.nanmean(mAPs), 'mAPi_std': np.nanstd(mAPs),
+                      'preci_mean': np.nanmean(precs), 'preci_std': np.nanstd(precs)}
+        wandb.log(valid_data)
         
         
 def prepare_pbir_features(predicted_features_ext, gt_labels_ext):

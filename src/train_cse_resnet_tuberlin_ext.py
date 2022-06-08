@@ -64,6 +64,16 @@ parser.add_argument('--sake_lambda', metavar='LAMBDA', default='1.0', type=float
                     help='lambda for total SAKE loss (default: 1)')
 parser.add_argument('--zero_version', metavar='VERSION', default='zeroshot', type=str,
                     help='zeroshot version for training and testing (default: zeroshot)')
+parser.add_argument('--log_online', action='store_true',
+                    help='Flag. If set, run metrics are stored online in addition to offline logging. Should generally be set.')
+parser.add_argument('--wandb_key', default='<your_api_key_here>', type=str, help='API key for W&B.')
+parser.add_argument('--project', default='Sample_Project', type=str,
+                    help='Name of the project - relates to W&B project names. In --savename default setting part of the savename.')
+parser.add_argument('--group', default='Sample_Group', type=str, help='Name of the group - relates to W&B group names - all runs with same setup but different seeds are logged into one group. \
+                                                                                           In --savename default setting part of the savename.')
+parser.add_argument('--savename', default='group_plus_seed', type=str,
+                    help='Run savename - if default, the savename will comprise the project and group name (see wandb_parameters()).')
+
 
 class EMSLoss(nn.Module):
     def __init__(self, m=4):
@@ -109,6 +119,11 @@ class SoftCrossEntropy(nn.Module):
 def main():
     global args
     args = parser.parse_args()
+    if args.savename == 'group_plus_seed':
+        if args.log_online:
+            args.savename = args.group + '_s{}'.format(args.seed)
+        else:
+            args.savename = ''
     
     # create model
     # model = CSEResnetModel(args.arch, args.num_classes, pretrained=False, 
@@ -116,28 +131,34 @@ def main():
     model = CSEResnetModel_KDHashing(args.arch, args.num_hashing, args.num_classes, \
                                      freeze_features = args.freeze_features, ems=args.ems_loss)
     # model.cuda()
-    model = nn.DataParallel(model).cuda()
+    model = nn.DataParallel(model)
     print(str(datetime.datetime.now()) + ' student model inited.')
     model_t = cse_resnet50()
-    model_t = nn.DataParallel(model_t).cuda()
+    model_t = nn.DataParallel(model_t)
     print(str(datetime.datetime.now()) + ' teacher model inited.')
     
     # define loss function (criterion) and optimizer
     if args.ems_loss:
         print("**************  Use EMS Loss!")
         curr_m=1
-        criterion_train = EMSLoss(curr_m).cuda()
+        criterion_train = EMSLoss(curr_m)
     else:
-        criterion_train = nn.CrossEntropyLoss().cuda()
+        criterion_train = nn.CrossEntropyLoss()
         
         
-    criterion_train_kd = SoftCrossEntropy().cuda()
-    criterion_test = nn.CrossEntropyLoss().cuda()
+    criterion_train_kd = SoftCrossEntropy()
+    criterion_test = nn.CrossEntropyLoss()
     
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
 
     cudnn.benchmark = True
-    
+
+    if torch.cuda.is_available():
+        model = model.cuda()
+        model_t = model_t.cuda()
+        criterion_train = criterion_train.cuda()
+        criterion_train_kd = criterion_train_kd.cuda()
+        criterion_test = criterion_test.cuda()
     
     # load data
     immean = [0.485, 0.456, 0.406] # RGB channel mean for imagenet
@@ -150,22 +171,21 @@ def main():
     
     tuberlin_train = TUBerlinDataset(split='train', zero_version = args.zero_version, \
                                      transform=transformations, aug=True, cid_mask = True)
-    train_loader = DataLoader(dataset=tuberlin_train, batch_size=args.batch_size//10, shuffle=True, num_workers=2)
+    train_loader = DataLoader(dataset=tuberlin_train, batch_size=args.batch_size//10, shuffle=True, num_workers=0)
     
     tuberlin_train_ext = TUBerlinDataset(split='train', zero_version = args.zero_version, \
                                          version='ImageResized_ready', \
                                          transform=transformations, aug=True, cid_mask = True)
     
     train_loader_ext = DataLoader(dataset=tuberlin_train_ext, \
-                                  batch_size=args.batch_size//10*9, shuffle=True, num_workers=2)
+                                  batch_size=args.batch_size//10*9, shuffle=True, num_workers=0)
     
     
     tuberlin_val = TUBerlinDataset(split='val', zero_version = args.zero_version, \
                                    transform=transformations, aug=False)
-    val_loader = DataLoader(dataset=tuberlin_val, batch_size=args.batch_size, shuffle=False, num_workers=2)
+    val_loader = DataLoader(dataset=tuberlin_val, batch_size=args.batch_size, shuffle=False, num_workers=0)
     
     print(str(datetime.datetime.now()) + ' data loaded.')
-    
     
     if args.evaluate:
         acc1 = validate(val_loader, model, criterion_test, criterion_train_kd, model_t)
@@ -173,6 +193,15 @@ def main():
     
     if not os.path.exists(args.savedir):
         os.makedirs(args.savedir)
+
+    if args.log_online:
+        import wandb
+        _ = os.system('wandb login {}'.format(args.wandb_key))
+        os.environ['WANDB_API_KEY'] = args.wandb_key
+        save_path = os.path.join(args.path_aux, 'CheckPoints', 'wandb')
+        wandb.init(project=args.project, group=args.group, name=args.savename, dir=save_path,
+                   settings=wandb.Settings(start_method='fork'))
+        wandb.config.update(vars(args))
         
     best_acc1 = 0
     for epoch in range(args.epochs):
@@ -181,7 +210,9 @@ def main():
             if epoch in [20,25]:
                 new_m = curr_m*2
                 print("update m at epoch {}: from {} to {}".format(epoch, curr_m, new_m))
-                criterion_train = EMSLoss(new_m).cuda()
+                criterion_train = EMSLoss(new_m)
+                if torch.cuda.is_available():
+                    criterion_train = criterion_train.cuda()
                 curr_m = new_m
         
         train(train_loader, train_loader_ext, model, criterion_train, criterion_train_kd, \
@@ -198,8 +229,11 @@ def main():
             'best_acc1': best_acc1,
             'optimizer' : optimizer.state_dict(),
         }, is_best, filename = os.path.join(args.savedir,'checkpoint.pth.tar'))
-        
-    
+
+        if args.log_online:
+            valid_data = {'top1': acc1}
+            wandb.log(valid_data)
+
     
 def train(train_loader, train_loader_ext, model, criterion, criterion_kd, \
           optimizer, epoch, model_t):
@@ -234,10 +268,16 @@ def train(train_loader, train_loader_ext, model, criterion, criterion_kd, \
         # target_all = target_all.type(torch.LongTensor).view(-1,)
         # target_all = torch.autograd.Variable(target_all).cuda()
         
-        input_all = input_all.cuda()
-        tag_all = tag_all.cuda()
-        target_all = target_all.type(torch.LongTensor).view(-1,).cuda()
-        cid_mask_all = cid_mask_all.float().cuda()
+        input_all = input_all
+        tag_all = tag_all
+        target_all = target_all.type(torch.LongTensor).view(-1,)
+        cid_mask_all = cid_mask_all.float()
+
+        if torch.cuda.is_available():
+            input_all = input_all.cuda()
+            tag_all = tag_all.cuda()
+            target_all = target_all.cuda()
+            cid_mask_all = cid_mask_all.cuda()
         
         output,output_kd = model(input_all,tag_all)
         with torch.no_grad():
@@ -284,14 +324,20 @@ def validate(val_loader, model, criterion, criterion_kd, model_t):
     model_t.eval()
     end = time.time()
     for i, (input, target) in enumerate(val_loader):
-        input = torch.autograd.Variable(input, requires_grad=False).cuda()
+        input = torch.autograd.Variable(input, requires_grad=False)
         target = target.type(torch.LongTensor).view(-1,)
-        target = torch.autograd.Variable(target).cuda()
+        target = torch.autograd.Variable(target)
+        if torch.cuda.is_available():
+            input = input.cuda()
+            target = target.cuda()
 
         # compute output
         with torch.no_grad():
-            output_t = model_t(input, torch.zeros(input.size()[0],1).cuda())
-            output,output_kd = model(input, torch.zeros(input.size()[0],1).cuda())
+            zeros = torch.zeros(input.size()[0],1)
+            if torch.cuda.is_available():
+                zeros = zeros.cuda()
+            output_t = model_t(input, zeros)
+            output,output_kd = model(input, zeros)
             
         loss = criterion(output, target)
         loss_kd = criterion_kd(output_kd, output_t)
@@ -370,7 +416,8 @@ def accuracy(output, target, topk=(1,)):
 
     res = []
     for k in topk:
-        correct_k = correct[:k].view(-1).float().sum(0, keepdim=True)
+        # temp = correct[:k].flatten().float().sum(0, keepdim=True)
+        correct_k = correct[:k].flatten().float().sum(0, keepdim=True)
         res.append(correct_k.mul_(100.0 / batch_size))
     return res
         
