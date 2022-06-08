@@ -121,7 +121,7 @@ def main():
     args = parser.parse_args()
     if args.savename == 'group_plus_seed':
         if args.log_online:
-            args.savename = args.group + '_s{}'.format(args.seed)
+            args.savename = args.group
         else:
             args.savename = ''
     
