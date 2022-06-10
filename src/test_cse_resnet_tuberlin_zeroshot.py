@@ -21,7 +21,7 @@ import pretrainedmodels
 import torch.nn.functional as F
 from ResnetModel import CSEResnetModel_KD, CSEResnetModel_KDHashing
 
-warnings.filterwarnings("error")
+# warnings.filterwarnings("error")
 
 model_names = sorted(name for name in pretrainedmodels.__dict__
                      if name.islower() and not name.startswith("__"))
@@ -67,7 +67,6 @@ parser.add_argument('--group', default='Sample_Group', type=str, help='Name of t
 parser.add_argument('--savename', default='group_plus_seed', type=str,
                     help='Run savename - if default, the savename will comprise the project and group name (see wandb_parameters()).')
 parser.add_argument('--path_aux', type=str, default=os.getcwd())
-
 
 
 def main():
@@ -138,8 +137,7 @@ def main():
         predicted_features_gallery, gt_labels_gallery, \
         predicted_features_query, gt_labels_query, \
         scores = prepare_pbir_features(predicted_features_gallery, gt_labels_gallery)
-    
-    
+
     mAP_ls = [[] for _ in range(len(np.unique(gt_labels_query)))]
     for fi in range(predicted_features_query.shape[0]):
         mapi = eval_AP_inner(gt_labels_query[fi], scores[fi], gt_labels_gallery)
@@ -157,8 +155,14 @@ def main():
         for preci,precs in enumerate(prec_ls):
             print(str(preci)+' '+str(np.nanmean(precs))+' '+str(np.nanstd(precs)))
     if args.log_online:
-        valid_data = {'mAPi_mean': np.nanmean(mAPs), 'mAPi_std': np.nanstd(mAPs),
-                      'preci_mean': np.nanmean(precs), 'preci_std': np.nanstd(precs)}
+        valid_data = {}
+        for mAPi, mAPs in enumerate(mAP_ls):
+            valid_data['mAPi_mean' + str(mAPi)] = np.nanmean(mAPs)
+            valid_data['mAPi_std' + str(mAPi)] = np.nanstd(mAPs)
+        if args.precision:
+            for preci, precs in enumerate(prec_ls):
+                valid_data['preci_mean' + str(preci)] = np.nanmean(precs)
+                valid_data['preci_std' + str(preci)] = np.nanstd(precs)
         wandb.log(valid_data)
         
         
@@ -195,11 +199,14 @@ def prepare_features():
     # model = CSEResnetModel_KD(args.arch, args.num_classes, ems=args.ems_loss)
     model = CSEResnetModel_KDHashing(args.arch, args.num_hashing, args.num_classes)
     # model.cuda()
-    model = nn.DataParallel(model).cuda()
+    model = nn.DataParallel(model)
     print(str(datetime.datetime.now()) + ' model inited.')
 
     # define loss function (criterion) and optimizer
-    criterion = nn.CrossEntropyLoss().cuda()
+    criterion = nn.CrossEntropyLoss()
+    if torch.cuda.is_available():
+        model = model.cuda()
+        criterion = criterion.cuda()
 
     # resume from a checkpoint
     if args.resume_file:
@@ -276,14 +283,16 @@ def get_features(data_loader, model, tag=1):
     features_all = []
     targets_all = []
     # avgpool = nn.AvgPool2d(7, stride=1).cuda()
-    avgpool = nn.AdaptiveAvgPool2d(1).cuda()
+    # avgpool = nn.AdaptiveAvgPool2d(1).cuda()
     for i, (input, target) in enumerate(data_loader):
         if i%10==0:
             print(i, end=' ', flush=True)
-        
-        
-        tag_input = (torch.ones(input.size()[0],1)*tag).cuda()
-        input = torch.autograd.Variable(input, requires_grad=False).cuda()
+
+        tag_input = (torch.ones(input.size()[0],1)*tag)
+        input = torch.autograd.Variable(input, requires_grad=False)
+        if torch.cuda.is_available():
+            tag_input = tag_input.cuda()
+            input = input.cuda()
         
         
         # compute output
@@ -307,6 +316,11 @@ def get_features(data_loader, model, tag=1):
         
         features_all.append(features.reshape(input.size()[0],-1))
         targets_all.append(target.detach().numpy())
+
+        # todo remove
+        if i > 20:
+            break
+        # ===========
         
         
     print('')
@@ -317,7 +331,6 @@ def get_features(data_loader, model, tag=1):
     print('Features ready: {}, {}'.format(features_all.shape, targets_all.shape))
     
     return features_all, targets_all
-
 
         
 def eval_AP_inner(inst_id, scores, gt_labels, top=None):
