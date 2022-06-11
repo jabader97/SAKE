@@ -62,8 +62,19 @@ parser.add_argument('--kdneg_lambda', metavar='LAMBDA', default='0.3', type=floa
                     help='lambda for semantic adjustment (default: 0.3)')
 parser.add_argument('--sake_lambda', metavar='LAMBDA', default='1.0', type=float,
                     help='lambda for total SAKE loss (default: 1)')
-parser.add_argument('--zero_version', metavar='VERSION', default='zeroshot1', type=str,
-                    help='zeroshot version for training and testing (default: zeroshot1)')
+parser.add_argument('--zero_version', metavar='VERSION', default='zeroshot', type=str,
+                    help='zeroshot version for training and testing (default: zeroshot)')
+parser.add_argument('--log_online', action='store_true',
+                    help='Flag. If set, run metrics are stored online in addition to offline logging. Should generally be set.')
+parser.add_argument('--wandb_key', default='<your_api_key_here>', type=str, help='API key for W&B.')
+parser.add_argument('--project', default='Sample_Project', type=str,
+                    help='Name of the project - relates to W&B project names. In --savename default setting part of the savename.')
+parser.add_argument('--group', default='Sample_Group', type=str, help='Name of the group - relates to W&B group names - all runs with same setup but different seeds are logged into one group. \
+                                                                                           In --savename default setting part of the savename.')
+parser.add_argument('--savename', default='group_plus_seed', type=str,
+                    help='Run savename - if default, the savename will comprise the project and group name (see wandb_parameters()).')
+parser.add_argument('--path_aux', type=str, default=os.getcwd())
+
 
 class EMSLoss(nn.Module):
     def __init__(self, m=4):
@@ -83,6 +94,11 @@ class EMSLoss(nn.Module):
 def main():
     global args
     args = parser.parse_args()
+    if args.savename == 'group_plus_seed':
+        if args.log_online:
+            args.savename = args.group
+        else:
+            args.savename = ''
     if args.zero_version == 'zeroshot2':
         args.num_classes = 104
         
@@ -92,19 +108,19 @@ def main():
     model = CSEResnetModel_KDHashing(args.arch, args.num_hashing, args.num_classes, \
                                      freeze_features = args.freeze_features, ems=args.ems_loss)
     # model.cuda()
-    model = nn.DataParallel(model).cuda()
+    model = nn.DataParallel(model)
     print(str(datetime.datetime.now()) + ' student model inited.')
     model_t = cse_resnet50()
-    model_t = nn.DataParallel(model_t).cuda()
+    model_t = nn.DataParallel(model_t)
     print(str(datetime.datetime.now()) + ' teacher model inited.')
     
     # define loss function (criterion) and optimizer
     if args.ems_loss:
         print("**************  Use EMS Loss!")
         curr_m=1
-        criterion_train = EMSLoss(curr_m).cuda()
+        criterion_train = EMSLoss(curr_m)
     else:
-        criterion_train = nn.CrossEntropyLoss().cuda()
+        criterion_train = nn.CrossEntropyLoss()
         
         
     criterion_train_kd = SoftCrossEntropy().cuda()
@@ -113,6 +129,13 @@ def main():
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
 
     cudnn.benchmark = True
+
+    if torch.cuda.is_available():
+        model = model.cuda()
+        model_t = model_t.cuda()
+        criterion_train = criterion_train.cuda()
+        criterion_train_kd = criterion_train_kd.cuda()
+        criterion_test = criterion_test.cuda()
     
     
     # load data
@@ -126,17 +149,17 @@ def main():
     
     sketchy_train = SketchyDataset(split='train', zero_version=args.zero_version, \
                                     transform=transformations, aug=True, cid_mask = True)
-    train_loader = DataLoader(dataset=sketchy_train, batch_size=args.batch_size//3, shuffle=True, num_workers=2)
+    train_loader = DataLoader(dataset=sketchy_train, batch_size=args.batch_size//3, shuffle=True, num_workers=0)
     
     sketchy_train_ext = SketchyDataset(split='train', version='all_photo', zero_version=args.zero_version, \
                                          transform=transformations, aug=True, cid_mask = True)
     
     train_loader_ext = DataLoader(dataset=sketchy_train_ext, \
-                                  batch_size=args.batch_size//3*2, shuffle=True, num_workers=2)
+                                  batch_size=args.batch_size//3*2, shuffle=True, num_workers=0)
     
     
     sketchy_val = SketchyDataset(split='val', zero_version=args.zero_version, transform=transformations, aug=False)
-    val_loader = DataLoader(dataset=sketchy_val, batch_size=args.batch_size, shuffle=False, num_workers=2)
+    val_loader = DataLoader(dataset=sketchy_val, batch_size=args.batch_size, shuffle=False, num_workers=0)
     # if args.evaluate:
     #     pascal = Pascal3dPlus(category=args.category, split='test', crop=False, first_n_debug=9999)
     
@@ -149,6 +172,15 @@ def main():
     
     if not os.path.exists(args.savedir):
         os.makedirs(args.savedir)
+
+    if args.log_online:
+        import wandb
+        _ = os.system('wandb login {}'.format(args.wandb_key))
+        os.environ['WANDB_API_KEY'] = args.wandb_key
+        save_path = os.path.join(args.path_aux, 'CheckPoints', 'wandb')
+        wandb.init(project=args.project, group=args.group, name=args.savename, dir=save_path,
+                   settings=wandb.Settings(start_method='fork'))
+        wandb.config.update(vars(args))
         
     best_acc1 = 0
     for epoch in range(args.epochs):
@@ -157,8 +189,10 @@ def main():
             if epoch in [20,25]:
                 new_m = curr_m*2
                 print("update m at epoch {}: from {} to {}".format(epoch, curr_m, new_m))
-                criterion_train = EMSLoss(new_m).cuda()
+                criterion_train = EMSLoss(new_m)
                 curr_m = new_m
+                if torch.cuda.is_available():
+                    criterion_train = criterion_train.cuda()
         
         train(train_loader, train_loader_ext, model, criterion_train, criterion_train_kd, \
               optimizer, epoch, model_t)
@@ -174,6 +208,9 @@ def main():
             'best_acc1': best_acc1,
             'optimizer' : optimizer.state_dict(),
         }, is_best, filename = os.path.join(args.savedir,'checkpoint.pth.tar'))
+        if args.log_online:
+            valid_data = {'top1': acc1}
+            wandb.log(valid_data)
         
     
     
@@ -210,10 +247,16 @@ def train(train_loader, train_loader_ext, model, criterion, criterion_kd, \
         # target_all = target_all.type(torch.LongTensor).view(-1,)
         # target_all = torch.autograd.Variable(target_all).cuda()
         
-        input_all = input_all.cuda()
-        tag_all = tag_all.cuda()
-        target_all = target_all.type(torch.LongTensor).view(-1,).cuda()
-        cid_mask_all = cid_mask_all.float().cuda()
+        input_all = input_all
+        tag_all = tag_all
+        target_all = target_all.type(torch.LongTensor).view(-1,)
+        cid_mask_all = cid_mask_all.float()
+
+        if torch.cuda.is_available():
+            input_all = input_all.cuda()
+            tag_all = tag_all.cuda()
+            target_all = target_all.cuda()
+            cid_mask_all = cid_mask_all.cuda()
         
         output,output_kd = model(input_all,tag_all)
         with torch.no_grad():
@@ -263,14 +306,20 @@ def validate(val_loader, model, criterion, criterion_kd, model_t):
     model_t.eval()
     end = time.time()
     for i, (input, target) in enumerate(val_loader):
-        input = torch.autograd.Variable(input, requires_grad=False).cuda()
+        input = torch.autograd.Variable(input, requires_grad=False)
         target = target.type(torch.LongTensor).view(-1,)
-        target = torch.autograd.Variable(target).cuda()
+        target = torch.autograd.Variable(target)
+        if torch.cuda.is_available():
+            input = input.cuda()
+            target = target.cuda()
 
         # compute output
         with torch.no_grad():
-            output_t = model_t(input, torch.zeros(input.size()[0],1).cuda())
-            output,output_kd = model(input, torch.zeros(input.size()[0],1).cuda())
+            zeros = torch.zeros(input.size()[0],1)
+            if torch.cuda.is_available():
+                zeros = zeros.cuda()
+            output_t = model_t(input, zeros)
+            output,output_kd = model(input, zeros)
         
         loss = criterion(output, target)
         loss_kd = criterion_kd(output_kd, output_t)
@@ -349,7 +398,7 @@ def accuracy(output, target, topk=(1,)):
 
     res = []
     for k in topk:
-        correct_k = correct[:k].view(-1).float().sum(0, keepdim=True)
+        correct_k = correct[:k].flatten().float().sum(0, keepdim=True)
         res.append(correct_k.mul_(100.0 / batch_size))
     return res
         

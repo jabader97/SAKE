@@ -36,22 +36,23 @@ def random_transform(img):
 
 class SketchyDataset(Dataset):
     def __init__(self, split='train',
-                 root_dir='../dataset/Sketchy/',
+                 root_dir='/Users/jessicabader/Documents/Tuebingen/sbir_irp_2022/datasets',
                  version='sketch_tx_000000000000_ready', zero_version='zeroshot1',
                  cid_mask = False, transform=None, aug=False, shuffle=False, first_n_debug=9999999):
         
         self.root_dir = root_dir
         self.version = version
         self.split = split
+        self.dataset = 'Sketchy'
         
         self.img_dir = self.root_dir
         
         if self.split == 'train':
-            file_ls_file = os.path.join(self.root_dir, zero_version, self.version+'_filelist_train.txt')
+            file_ls_file = os.path.join(self.root_dir, self.dataset, zero_version, self.version+'_filelist_train.txt')
         elif self.split == 'val':
-            file_ls_file = os.path.join(self.root_dir, zero_version, self.version+'_filelist_test.txt')
+            file_ls_file = os.path.join(self.root_dir, self.dataset, zero_version, self.version+'_filelist_test.txt')
         elif self.split == 'zero':
-            file_ls_file = os.path.join(self.root_dir, zero_version, self.version+'_filelist_zero.txt')
+            file_ls_file = os.path.join(self.root_dir, self.dataset, zero_version, self.version+'_filelist_zero.txt')
         else:
             print('unknown split for dataset initialization: ' + self.split)
             return
@@ -72,7 +73,7 @@ class SketchyDataset(Dataset):
         
         self.cid_mask = cid_mask
         if cid_mask:
-            cid_mask_file = os.path.join(self.root_dir, zero_version, 'cid_mask.pickle')
+            cid_mask_file = os.path.join(self.root_dir, self.dataset, zero_version, 'cid_mask.pickle')
             with open(cid_mask_file, 'rb') as fh:
                 self.cid_matrix = pickle.load(fh)
 
@@ -80,7 +81,28 @@ class SketchyDataset(Dataset):
         return len(self.labels)
 
     def __getitem__(self, idx):
-        img = cv2.imread(os.path.join(self.img_dir, self.file_ls[idx]))[:,:,::-1]
+        # fix path name
+        file_name = self.file_ls[idx]
+        file_parts = file_name.split("/")
+        if file_parts[0] == 'EXTEND_image_sketchy_ready':
+            class_ind = 1
+        elif file_parts[0] == '256x256':
+            file_parts = file_parts[1:]
+            class_ind = 2
+        # fix - in class name
+        class_parts = file_parts[class_ind]
+        join_symbol = '_'
+        class_parts = class_parts.split('-')
+        file_parts[class_ind] = join_symbol.join(class_parts)
+        join_symbol = '/'
+        file_parts = join_symbol.join(file_parts)
+        # fix spaces
+        file_parts = file_parts.split()
+        file_parts = join_symbol.join(file_parts)
+        img = cv2.imread(os.path.join(os.path.join(self.img_dir, self.dataset, file_parts)))[:,:,::-1]
+
+
+
         if self.aug and np.random.random()<0.7:
             img = random_transform(img)
 
