@@ -156,9 +156,11 @@ def main():
             print(str(preci)+' '+str(np.nanmean(precs))+' '+str(np.nanstd(precs)))
     if args.log_online:
         valid_data = {}
-        for mAPi, mAPs in enumerate(mAP_ls):
-            valid_data['mAPi_mean' + str(mAPi)] = np.nanmean(mAPs)
-            valid_data['mAPi_std' + str(mAPi)] = np.nanstd(mAPs)
+        valid_data['mAPi_mean'] = np.nanmean(mAP_ls)
+        valid_datavalid_data['preci_mean'] = np.nanstd(prec_ls)
+        # for mAPi, mAPs in enumerate(mAP_ls):
+        #     valid_data['mAPi_mean' + str(mAPi)] = np.nanmean(mAPs)
+        #     valid_data['mAPi_std' + str(mAPi)] = np.nanstd(mAPs)
         if args.precision:
             for preci, precs in enumerate(prec_ls):
                 valid_data['preci_mean' + str(preci)] = np.nanmean(precs)
@@ -316,11 +318,6 @@ def get_features(data_loader, model, tag=1):
         
         features_all.append(features.reshape(input.size()[0],-1))
         targets_all.append(target.detach().numpy())
-
-        # todo remove
-        if i > 20:
-            break
-        # ===========
         
         
     print('')
