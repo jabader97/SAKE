@@ -74,6 +74,16 @@ parser.add_argument('--group', default='Sample_Group', type=str, help='Name of t
 parser.add_argument('--savename', default='group_plus_seed', type=str,
                     help='Run savename - if default, the savename will comprise the project and group name (see wandb_parameters()).')
 parser.add_argument('--path_aux', type=str, default=os.getcwd())
+parser.add_argument('--continue_training', action='store_true',
+                    help='start training from previous model')
+parser.add_argument('--resume_file',
+                    default='model_best.pth.tar',
+                    type=str, metavar='PATH',
+                    help='file name of model checkpoint (default: none)')
+parser.add_argument('--resume_dir',
+                    default='../cse_resnet50/checkpoint/tuberlin_kd1kdneg03sake1_f64/',
+                    type=str, metavar='PATH',
+                    help='dir of model checkpoint (default: none)')
 
 
 class EMSLoss(nn.Module):
@@ -137,6 +147,40 @@ def main():
     model_t = cse_resnet50()
     model_t = nn.DataParallel(model_t)
     print(str(datetime.datetime.now()) + ' teacher model inited.')
+
+    if args.continue_training:
+        # resume from a checkpoint
+        if args.resume_file:
+            resume = os.path.join(args.resume_dir, args.resume_file)
+        else:
+            resume = os.path.join(args.resume_dir, 'model_best.pth.tar')
+
+        if os.path.isfile(resume):
+            print("=> loading checkpoint '{}'".format(resume))
+            checkpoint = torch.load(resume)
+            args.start_epoch = checkpoint['epoch']
+
+            save_dict = checkpoint['state_dict']
+            model_dict = model.state_dict()
+
+            trash_vars = [k for k in save_dict.keys() if k not in model_dict.keys()]
+            print('trashed vars from resume dict:')
+            print(trash_vars)
+
+            resume_dict = {k: v for k, v in save_dict.items() if k in model_dict}
+            # resume_dict['module.linear.cpars'] = save_dict['module.linear.weight']
+
+            model_dict.update(resume_dict)
+            model.load_state_dict(model_dict)
+
+            # model.load_state_dict(checkpoint['state_dict'])
+            print("=> loaded checkpoint '{}' (epoch {})"
+                  .format(resume, checkpoint['epoch']))
+        else:
+            print("=> no checkpoint found at '{}'".format(resume))
+            # return
+    else:
+        args.start_epoch = 0
     
     # define loss function (criterion) and optimizer
     if args.ems_loss:
@@ -205,7 +249,7 @@ def main():
         wandb.config.update(vars(args))
         
     best_acc1 = 0
-    for epoch in range(args.epochs):
+    for epoch in range(args.start_epoch, args.epochs):
         adjust_learning_rate(optimizer, epoch)
         if args.ems_loss:
             if epoch in [20,25]:
