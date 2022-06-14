@@ -66,6 +66,7 @@ parser.add_argument('--group', default='Sample_Group', type=str, help='Name of t
                                                                                            In --savename default setting part of the savename.')
 parser.add_argument('--savename', default='group_plus_seed', type=str,
                     help='Run savename - if default, the savename will comprise the project and group name (see wandb_parameters()).')
+parser.add_argument('--path_aux', type=str, default=os.getcwd())
 
 
 
