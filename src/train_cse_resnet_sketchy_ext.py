@@ -115,6 +115,7 @@ def main():
     # create model
     # model = CSEResnetModel(args.arch, args.num_classes, pretrained=False, 
     #                        freeze_features = args.freeze_features, ems=args.ems_loss)
+    create_model_time = time.time()
     model = CSEResnetModel_KDHashing(args.arch, args.num_hashing, args.num_classes, \
                                      freeze_features = args.freeze_features, ems=args.ems_loss)
     # model.cuda()
@@ -123,7 +124,23 @@ def main():
     model_t = cse_resnet50()
     model_t = nn.DataParallel(model_t)
     print(str(datetime.datetime.now()) + ' teacher model inited.')
+    create_model_time = time.time() - create_model_time
+
+    if args.log_online:
+        import wandb
+        _ = os.system('wandb login {}'.format(args.wandb_key))
+        os.environ['WANDB_API_KEY'] = args.wandb_key
+        save_path = os.path.join(args.path_aux, 'CheckPoints', 'wandb')
+        project = args.project
+        group = args.group
+        savename = args.savename + '_s1'
+        # wandb.init(project=project, group=group, name=savename, dir=save_path,
+        #            settings=wandb.Settings(start_method='fork'))
+        wandb.init(project=project, group=group, name=savename, dir=save_path)
+        wandb.config.update(vars(args))
+
     if args.continue_training:
+        load_old_model_time = time.time()
         # resume from a checkpoint
         if args.resume_file:
             resume = os.path.join(args.resume_dir, args.resume_file)
@@ -154,6 +171,7 @@ def main():
         else:
             print("=> no checkpoint found at '{}'".format(resume))
             # return
+        load_old_model_time = time.time() - load_old_model_time
     else:
         args.start_epoch = 0
     
@@ -164,8 +182,7 @@ def main():
         criterion_train = EMSLoss(curr_m)
     else:
         criterion_train = nn.CrossEntropyLoss()
-        
-        
+
     criterion_train_kd = SoftCrossEntropy().cuda()
     criterion_test = nn.CrossEntropyLoss().cuda()
     
@@ -179,8 +196,7 @@ def main():
         criterion_train = criterion_train.cuda()
         criterion_train_kd = criterion_train_kd.cuda()
         criterion_test = criterion_test.cuda()
-    
-    
+
     # load data
     immean = [0.485, 0.456, 0.406] # RGB channel mean for imagenet
     imstd = [0.229, 0.224, 0.225]
@@ -189,7 +205,7 @@ def main():
                                           transforms.Resize([224,224]),
                                           transforms.ToTensor(),
                                           transforms.Normalize(immean, imstd)])
-    
+    dataset_time = time.time()
     sketchy_train = SketchyDataset(split='train', zero_version=args.zero_version, \
                                     transform=transformations, aug=True, cid_mask = True)
     train_loader = DataLoader(dataset=sketchy_train, batch_size=args.batch_size//3, shuffle=True, num_workers=0)
@@ -203,12 +219,13 @@ def main():
     
     sketchy_val = SketchyDataset(split='val', zero_version=args.zero_version, transform=transformations, aug=False)
     val_loader = DataLoader(dataset=sketchy_val, batch_size=args.batch_size, shuffle=False, num_workers=0)
+    dataset_time = time.time() - dataset_time
+
     # if args.evaluate:
     #     pascal = Pascal3dPlus(category=args.category, split='test', crop=False, first_n_debug=9999)
     
     print(str(datetime.datetime.now()) + ' data loaded.')
-    
-    
+
     if args.evaluate:
         acc1 = validate(val_loader, model, criterion_test, criterion_train_kd, model_t)
         return
@@ -217,14 +234,11 @@ def main():
         os.makedirs(args.savedir)
 
     if args.log_online:
-        import wandb
-        _ = os.system('wandb login {}'.format(args.wandb_key))
-        os.environ['WANDB_API_KEY'] = args.wandb_key
-        save_path = os.path.join(args.path_aux, 'CheckPoints', 'wandb')
-        wandb.init(project=args.project, group=args.group, name=args.savename, dir=save_path,
-                   settings=wandb.Settings(start_method='fork'))
-        wandb.config.update(vars(args))
-        
+        wandb.log({'create_model_time': create_model_time, 'dataset_time': dataset_time})
+        if args.continue_training:
+            wandb.log({'load_old_model_time': load_old_model_time})
+
+    time_log = {'train_one_epoch_time': AverageMeter(), 'valid_time': AverageMeter(), 'save_time': AverageMeter()}
     best_acc1 = 0
     for epoch in range(args.start_epoch, args.epochs):
         adjust_learning_rate(optimizer, epoch)
@@ -236,14 +250,19 @@ def main():
                 curr_m = new_m
                 if torch.cuda.is_available():
                     criterion_train = criterion_train.cuda()
-        
-        train(train_loader, train_loader_ext, model, criterion_train, criterion_train_kd, \
+
+        train_one_epoch_time = time.time()
+        train_time_log = train(train_loader, train_loader_ext, model, criterion_train, criterion_train_kd, \
               optimizer, epoch, model_t)
-        acc1 = validate(val_loader, model, criterion_test, criterion_train_kd, model_t)
+        time_log['train_one_epoch_time'].update(time.time() - train_one_epoch_time)
+        valid_time = time.time()
+        acc1, valid_time_log = validate(val_loader, model, criterion_test, criterion_train_kd, model_t)
+        time_log['valid_time'].update(time.time() - valid_time)
         
         is_best = acc1 > best_acc1
         best_acc1 = max(acc1, best_acc1)
-        
+
+        save_time = time.time()
         save_checkpoint({
             'epoch': epoch + 1,
             'arch': args.arch,
@@ -251,12 +270,20 @@ def main():
             'best_acc1': best_acc1,
             'optimizer' : optimizer.state_dict(),
         }, is_best, filename = os.path.join(args.savedir,'checkpoint.pth.tar'))
+        time_log['save_time'].update(time.time() - save_time)
         if args.log_online:
             valid_data = {'top1': acc1}
             wandb.log(valid_data)
+            for key in train_time_log.keys():
+                time_log[key] = train_time_log[key]
+            for key in valid_time_log.keys():
+                time_log[key] = valid_time_log[key]
+            time_log_to_log = {}
+            for key in time_log.keys():
+                time_log_to_log[key] = time_log[key].avg
+            wandb.log(time_log_to_log)
         
-    
-    
+
 def train(train_loader, train_loader_ext, model, criterion, criterion_kd, \
           optimizer, epoch, model_t):
     
@@ -265,6 +292,10 @@ def train(train_loader, train_loader_ext, model, criterion, criterion_kd, \
     losses_kd = AverageMeter()
     top1 = AverageMeter()
     top5 = AverageMeter()
+    forward_pass_time = AverageMeter()
+    forward_pass_t_time = AverageMeter()
+    accuracy_time = AverageMeter()
+    backward_time = AverageMeter()
     
     # switch to train mode
     model.train()
@@ -300,16 +331,23 @@ def train(train_loader, train_loader_ext, model, criterion, criterion_kd, \
             tag_all = tag_all.cuda()
             target_all = target_all.cuda()
             cid_mask_all = cid_mask_all.cuda()
-        
-        output,output_kd = model(input_all,tag_all)
+
+        forward_pass_time_start = time.time()
+        output, output_kd = model(input_all, tag_all)
+        forward_pass_time.update(time.time() - forward_pass_time_start)
+
         with torch.no_grad():
+            forward_pass_t_time_start = time.time()
             output_t = model_t(input_all,tag_all)
+            forward_pass_t_time.update(time.time() - forward_pass_t_time_start)
             
         loss = criterion(output, target_all)
         loss_kd = criterion_kd(output_kd, output_t * args.kd_lambda, tag_all, cid_mask_all * args.kdneg_lambda)
         
         # measure accuracy and record loss
+        accuracy_time_start = time.time()
         acc1, acc5 = accuracy(output, target_all, topk=(1, 5))
+        accuracy_time.update(time.time() - accuracy_time_start)
         losses.update(loss.item(), input_all.size(0))
         losses_kd.update(loss_kd.item(), input_ext.size(0))
         top1.update(acc1[0], input_all.size(0))
@@ -318,14 +356,15 @@ def train(train_loader, train_loader_ext, model, criterion, criterion_kd, \
         # compute gradient and do SGD step
         optimizer.zero_grad()
         loss_total = loss+args.sake_lambda*loss_kd
-        
+
+        backward_time_start = time.time()
         loss_total.backward()
+        backward_time.update(time.time() - backward_time_start)
         optimizer.step()
         
         # measure elapsed time
         batch_time.update(time.time() - end)
         end = time.time()
-        
         
         if i % args.print_freq == 0 or i == len(train_loader)-1:
             print('Epoch: [{0}][{1}/{2}]\t'
@@ -334,8 +373,10 @@ def train(train_loader, train_loader_ext, model, criterion, criterion_kd, \
                   'Acc@1 {top1.val:.2f} ({top1.avg:.2f})'.format(
                    epoch, i, len(train_loader), batch_time=batch_time,
                    loss=losses, loss_kd=losses_kd, top1=top1))
-        
-        
+
+    return {'forward_pass_time': forward_pass_time, 'forward_pass_t_time': forward_pass_t_time,
+            'accuracy_time': accuracy_time, 'backward_time': backward_time}
+
     
 def validate(val_loader, model, criterion, criterion_kd, model_t):
     batch_time = AverageMeter()
@@ -343,6 +384,9 @@ def validate(val_loader, model, criterion, criterion_kd, model_t):
     losses_kd = AverageMeter()
     top1 = AverageMeter()
     top5 = AverageMeter()
+    valid_model_t_time = AverageMeter()
+    valid_model_time = AverageMeter()
+    valid_accuracy_time = AverageMeter()
 
     # switch to evaluate mode
     model.eval()
@@ -361,15 +405,21 @@ def validate(val_loader, model, criterion, criterion_kd, model_t):
             zeros = torch.zeros(input.size()[0],1)
             if torch.cuda.is_available():
                 zeros = zeros.cuda()
+            valid_model_t_time_start = time.time()
             output_t = model_t(input, zeros)
+            valid_model_t_time.update(time.time() - valid_model_t_time_start)
+            valid_model_time_start = time.time()
             output,output_kd = model(input, zeros)
+            valid_model_time.update(time.time() - valid_model_time_start)
         
         loss = criterion(output, target)
         loss_kd = criterion_kd(output_kd, output_t)
         
 
         # measure accuracy and record loss
+        valid_accuracy_time_start = time.time()
         acc1, acc5 = accuracy(output, target, topk=(1, 5))
+        valid_accuracy_time.update(time.time() - valid_accuracy_time_start)
         losses.update(loss.item(), input.size(0))
         losses_kd.update(loss_kd.item(), input.size(0))
         top1.update(acc1[0], input.size(0))
@@ -391,7 +441,8 @@ def validate(val_loader, model, criterion, criterion_kd, model_t):
     print(' * Acc@1 {top1.avg:.3f} Acc@5 {top5.avg:.3f}'
           .format(top1=top1, top5=top5))
             
-    return top1.avg
+    return top1.avg, {'valid_model_t_time': valid_model_t_time, 'valid_model_time': valid_model_time,
+                      'valid_accuracy_time': valid_accuracy_time}
 
 
 def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
