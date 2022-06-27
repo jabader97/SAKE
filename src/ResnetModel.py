@@ -185,7 +185,8 @@ class CSEResnetModel_KD(nn.Module):
         
         out_kd = self.original_model.logits(out_o)
         return out,out_kd
-    
+
+
 class CSEResnetModel_KDHashing(nn.Module):
     def __init__(self, arch, hashing_dim, num_classes, pretrained=True, freeze_features=False, ems=False):
         super(CSEResnetModel_KDHashing, self).__init__()
@@ -198,7 +199,6 @@ class CSEResnetModel_KDHashing(nn.Module):
             self.original_model = cse_resnet50_hashing(self.hashing_dim)
         else:
             self.original_model = cse_resnet50_hashing(self.hashing_dim, pretrained=None)
-            
         
         self.ems = ems
         if self.ems:
@@ -211,22 +211,14 @@ class CSEResnetModel_KDHashing(nn.Module):
             for ff in self.features:
                 for pp in ff.parameters():
                     pp.requires_grad = False
-                    
-                    
+
     def forward(self, x, y):
-        out_o = self.original_model.features(x,y)
+        out_o = self.original_model.features(x, y)
         out_o = self.original_model.hashing(out_o)
         
         out = self.linear(out_o)
         out_kd = self.original_model.logits(out_o)
-
-#         x_norm = out_o.norm(p=2, dim=1, keepdim=True).clamp(min=1e-12)
-#         normed = out_o / x_norm
-        
-#         out = F.linear(normed, F.normalize(self.linear.weight), None) * x_norm
-#         out_kd = F.linear(normed, F.normalize(self.original_model.last_linear.weight), None) * x_norm
-
-        return out,out_kd
+        return out, out_kd
     
     
 class EMSLayer(nn.Module):

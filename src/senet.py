@@ -114,28 +114,6 @@ pretrained_settings = {
 }
 
 
-# class SEModule(nn.Module):
-
-#     def __init__(self, channels, reduction):
-#         super(SEModule, self).__init__()
-#         self.avg_pool = nn.AdaptiveAvgPool2d(1)
-#         self.fc1 = nn.Conv2d(channels, channels // reduction, kernel_size=1,
-#                              padding=0)
-#         self.relu = nn.ReLU(inplace=True)
-#         self.fc2 = nn.Conv2d(channels // reduction, channels, kernel_size=1,
-#                              padding=0)
-#         self.sigmoid = nn.Sigmoid()
-
-#     def forward(self, x):
-#         module_input = x
-#         x = self.avg_pool(x)
-#         x = self.fc1(x)
-#         x = self.relu(x)
-#         x = self.fc2(x)
-#         x = self.sigmoid(x)
-#         return module_input * x
-
-
 class CSEModule(nn.Module):
 
     def __init__(self, channels, reduction):
@@ -189,55 +167,6 @@ class Bottleneck(nn.Module):
 
         return out
 
-
-# class SEBottleneck(Bottleneck):
-#     """
-#     Bottleneck for SENet154.
-#     """
-#     expansion = 4
-
-#     def __init__(self, inplanes, planes, groups, reduction, stride=1,
-#                  downsample=None):
-#         super(SEBottleneck, self).__init__()
-#         self.conv1 = nn.Conv2d(inplanes, planes * 2, kernel_size=1, bias=False)
-#         self.bn1 = nn.BatchNorm2d(planes * 2)
-#         self.conv2 = nn.Conv2d(planes * 2, planes * 4, kernel_size=3,
-#                                stride=stride, padding=1, groups=groups,
-#                                bias=False)
-#         self.bn2 = nn.BatchNorm2d(planes * 4)
-#         self.conv3 = nn.Conv2d(planes * 4, planes * 4, kernel_size=1,
-#                                bias=False)
-#         self.bn3 = nn.BatchNorm2d(planes * 4)
-#         self.relu = nn.ReLU(inplace=True)
-#         self.se_module = SEModule(planes * 4, reduction=reduction)
-#         self.downsample = downsample
-#         self.stride = stride
-
-
-# class SEResNetBottleneck(Bottleneck):
-#     """
-#     ResNet bottleneck with a Squeeze-and-Excitation module. It follows Caffe
-#     implementation and uses `stride=stride` in `conv1` and not in `conv2`
-#     (the latter is used in the torchvision implementation of ResNet).
-#     """
-#     expansion = 4
-
-#     def __init__(self, inplanes, planes, groups, reduction, stride=1,
-#                  downsample=None):
-#         super(CSEResNetBottleneck, self).__init__()
-#         self.conv1 = nn.Conv2d(inplanes, planes, kernel_size=1, bias=False,
-#                                stride=stride)
-#         self.bn1 = nn.BatchNorm2d(planes)
-#         self.conv2 = nn.Conv2d(planes, planes, kernel_size=3, padding=1,
-#                                groups=groups, bias=False)
-#         self.bn2 = nn.BatchNorm2d(planes)
-#         self.conv3 = nn.Conv2d(planes, planes * 4, kernel_size=1, bias=False)
-#         self.bn3 = nn.BatchNorm2d(planes * 4)
-#         self.relu = nn.ReLU(inplace=True)
-#         self.se_module = SEModule(planes * 4, reduction=reduction)
-#         self.downsample = downsample
-#         self.stride = stride
-        
         
 class CSEResNetBottleneck(Bottleneck):
     """
@@ -284,30 +213,6 @@ class CSEResNetBottleneck(Bottleneck):
         out = self.relu(out)
 
         return out
-
-
-# class SEResNeXtBottleneck(Bottleneck):
-#     """
-#     ResNeXt bottleneck type C with a Squeeze-and-Excitation module.
-#     """
-#     expansion = 4
-
-#     def __init__(self, inplanes, planes, groups, reduction, stride=1,
-#                  downsample=None, base_width=4):
-#         super(SEResNeXtBottleneck, self).__init__()
-#         width = math.floor(planes * (base_width / 64)) * groups
-#         self.conv1 = nn.Conv2d(inplanes, width, kernel_size=1, bias=False,
-#                                stride=1)
-#         self.bn1 = nn.BatchNorm2d(width)
-#         self.conv2 = nn.Conv2d(width, width, kernel_size=3, stride=stride,
-#                                padding=1, groups=groups, bias=False)
-#         self.bn2 = nn.BatchNorm2d(width)
-#         self.conv3 = nn.Conv2d(width, planes * 4, kernel_size=1, bias=False)
-#         self.bn3 = nn.BatchNorm2d(planes * 4)
-#         self.relu = nn.ReLU(inplace=True)
-#         self.se_module = SEModule(planes * 4, reduction=reduction)
-#         self.downsample = downsample
-#         self.stride = stride
 
 
 class CSENet(nn.Module):
@@ -771,66 +676,3 @@ def cse_resnet50_hashing(hashing_dim, num_classes=1000, pretrained='imagenet', e
         initialize_pretrained_model_hashing(model, hashing_dim, num_classes, settings)
     return model
 
-
-# def senet154(num_classes=1000, pretrained='imagenet'):
-#     model = SENet(SEBottleneck, [3, 8, 36, 3], groups=64, reduction=16,
-#                   dropout_p=0.2, num_classes=num_classes)
-#     if pretrained is not None:
-#         settings = pretrained_settings['senet154'][pretrained]
-#         initialize_pretrained_model(model, num_classes, settings)
-#     return model
-
-
-# def se_resnet50(num_classes=1000, pretrained='imagenet'):
-#     model = SENet(SEResNetBottleneck, [3, 4, 6, 3], groups=1, reduction=16,
-#                   dropout_p=None, inplanes=64, input_3x3=False,
-#                   downsample_kernel_size=1, downsample_padding=0,
-#                   num_classes=num_classes)
-#     if pretrained is not None:
-#         settings = pretrained_settings['se_resnet50'][pretrained]
-#         initialize_pretrained_model(model, num_classes, settings)
-#     return model
-
-
-# def se_resnet101(num_classes=1000, pretrained='imagenet'):
-#     model = SENet(SEResNetBottleneck, [3, 4, 23, 3], groups=1, reduction=16,
-#                   dropout_p=None, inplanes=64, input_3x3=False,
-#                   downsample_kernel_size=1, downsample_padding=0,
-#                   num_classes=num_classes)
-#     if pretrained is not None:
-#         settings = pretrained_settings['se_resnet101'][pretrained]
-#         initialize_pretrained_model(model, num_classes, settings)
-#     return model
-
-
-# def se_resnet152(num_classes=1000, pretrained='imagenet'):
-#     model = SENet(SEResNetBottleneck, [3, 8, 36, 3], groups=1, reduction=16,
-#                   dropout_p=None, inplanes=64, input_3x3=False,
-#                   downsample_kernel_size=1, downsample_padding=0,
-#                   num_classes=num_classes)
-#     if pretrained is not None:
-#         settings = pretrained_settings['se_resnet152'][pretrained]
-#         initialize_pretrained_model(model, num_classes, settings)
-#     return model
-
-
-# def se_resnext50_32x4d(num_classes=1000, pretrained='imagenet'):
-#     model = SENet(SEResNeXtBottleneck, [3, 4, 6, 3], groups=32, reduction=16,
-#                   dropout_p=None, inplanes=64, input_3x3=False,
-#                   downsample_kernel_size=1, downsample_padding=0,
-#                   num_classes=num_classes)
-#     if pretrained is not None:
-#         settings = pretrained_settings['se_resnext50_32x4d'][pretrained]
-#         initialize_pretrained_model(model, num_classes, settings)
-#     return model
-
-
-# def se_resnext101_32x4d(num_classes=1000, pretrained='imagenet'):
-#     model = SENet(SEResNeXtBottleneck, [3, 4, 23, 3], groups=32, reduction=16,
-#                   dropout_p=None, inplanes=64, input_3x3=False,
-#                   downsample_kernel_size=1, downsample_padding=0,
-#                   num_classes=num_classes)
-#     if pretrained is not None:
-#         settings = pretrained_settings['se_resnext101_32x4d'][pretrained]
-#         initialize_pretrained_model(model, num_classes, settings)
-#     return model

@@ -157,7 +157,7 @@ def main():
     if args.log_online:
         valid_data = {}
         valid_data['mAPi_mean'] = np.nanmean(mAP_ls)
-        valid_datavalid_data['preci_mean'] = np.nanstd(prec_ls)
+        valid_data['preci_mean'] = np.nanstd(prec_ls)
         # for mAPi, mAPs in enumerate(mAP_ls):
         #     valid_data['mAPi_mean' + str(mAPi)] = np.nanmean(mAPs)
         #     valid_data['mAPi_std' + str(mAPi)] = np.nanstd(mAPs)
