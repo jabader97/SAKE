@@ -216,7 +216,6 @@ def main():
     train_loader_ext = DataLoader(dataset=sketchy_train_ext, \
                                   batch_size=args.batch_size//3*2, shuffle=True, num_workers=0)
     
-    
     sketchy_val = SketchyDataset(split='val', zero_version=args.zero_version, transform=transformations, aug=False)
     val_loader = DataLoader(dataset=sketchy_val, batch_size=args.batch_size, shuffle=False, num_workers=0)
     dataset_time = time.time() - dataset_time
@@ -234,11 +233,11 @@ def main():
         os.makedirs(args.savedir)
 
     if args.log_online:
-        wandb.log({'create_model_time': create_model_time, 'dataset_time': dataset_time})
+        wandb.log({'model_load_time': create_model_time, 'dataset_creation_time': dataset_time})
         if args.continue_training:
             wandb.log({'load_old_model_time': load_old_model_time})
 
-    time_log = {'train_one_epoch_time': AverageMeter(), 'valid_time': AverageMeter(), 'save_time': AverageMeter()}
+    time_log = {}
     best_acc1 = 0
     for epoch in range(args.start_epoch, args.epochs):
         adjust_learning_rate(optimizer, epoch)
@@ -254,10 +253,10 @@ def main():
         train_one_epoch_time = time.time()
         train_time_log = train(train_loader, train_loader_ext, model, criterion_train, criterion_train_kd, \
               optimizer, epoch, model_t)
-        time_log['train_one_epoch_time'].update(time.time() - train_one_epoch_time)
+        time_log['train_one_epoch_time'] = time.time() - train_one_epoch_time
         valid_time = time.time()
         acc1, valid_time_log = validate(val_loader, model, criterion_test, criterion_train_kd, model_t)
-        time_log['valid_time'].update(time.time() - valid_time)
+        time_log['validation_per_epoch_time'] = time.time() - valid_time
         
         is_best = acc1 > best_acc1
         best_acc1 = max(acc1, best_acc1)
@@ -270,7 +269,7 @@ def main():
             'best_acc1': best_acc1,
             'optimizer' : optimizer.state_dict(),
         }, is_best, filename = os.path.join(args.savedir,'checkpoint.pth.tar'))
-        time_log['save_time'].update(time.time() - save_time)
+        time_log['save_checkpoint_time'] = time.time() - save_time
         if args.log_online:
             valid_data = {'top1': acc1}
             wandb.log(valid_data)
@@ -278,10 +277,9 @@ def main():
                 time_log[key] = train_time_log[key]
             for key in valid_time_log.keys():
                 time_log[key] = valid_time_log[key]
-            time_log_to_log = {}
-            for key in time_log.keys():
-                time_log_to_log[key] = time_log[key].avg
-            wandb.log(time_log_to_log)
+            time_log['forward_pass_time'] = time_log['forward_pass_t_time'] + time_log['forward_pass_s_time']
+            time_log['valid_model_time'] = time_log['valid_model_t_time'] + time_log['valid_model_s_time']
+            wandb.log(time_log)
         
 
 def train(train_loader, train_loader_ext, model, criterion, criterion_kd, \
@@ -292,22 +290,24 @@ def train(train_loader, train_loader_ext, model, criterion, criterion_kd, \
     losses_kd = AverageMeter()
     top1 = AverageMeter()
     top5 = AverageMeter()
-    forward_pass_time = AverageMeter()
+    forward_pass_s_time = AverageMeter()
     forward_pass_t_time = AverageMeter()
     accuracy_time = AverageMeter()
-    backward_time = AverageMeter()
+    backward_pass_time = AverageMeter()
+    one_loop_time = AverageMeter()
     
     # switch to train mode
     model.train()
     model_t.eval()
     end = time.time()
-    for i, ((input, target, cid_mask),(input_ext, target_ext, cid_mask_ext)) in enumerate(zip(train_loader, train_loader_ext)):
-        input_all = torch.cat([input, input_ext],dim=0)
-        tag_zeros = torch.zeros(input.size()[0],1)
-        tag_ones = torch.ones(input_ext.size()[0],1)
+    for i, ((input, target, cid_mask), (input_ext, target_ext, cid_mask_ext)) in enumerate(zip(train_loader, train_loader_ext)):
+        one_loop_time_start = time.time()
+        input_all = torch.cat([input, input_ext], dim=0)
+        tag_zeros = torch.zeros(input.size()[0], 1)
+        tag_ones = torch.ones(input_ext.size()[0], 1)
         tag_all = torch.cat([tag_zeros, tag_ones], dim=0)
         
-        target_all =  torch.cat([target, target_ext],dim=0)
+        target_all = torch.cat([target, target_ext], dim=0)
         cid_mask_all = torch.cat([cid_mask, cid_mask_ext], dim=0)
         
         shuffle_idx = np.arange(input_all.size()[0])
@@ -332,9 +332,9 @@ def train(train_loader, train_loader_ext, model, criterion, criterion_kd, \
             target_all = target_all.cuda()
             cid_mask_all = cid_mask_all.cuda()
 
-        forward_pass_time_start = time.time()
+        forward_pass_s_time_start = time.time()
         output, output_kd = model(input_all, tag_all)
-        forward_pass_time.update(time.time() - forward_pass_time_start)
+        forward_pass_s_time.update(time.time() - forward_pass_s_time_start)
 
         with torch.no_grad():
             forward_pass_t_time_start = time.time()
@@ -357,14 +357,16 @@ def train(train_loader, train_loader_ext, model, criterion, criterion_kd, \
         optimizer.zero_grad()
         loss_total = loss+args.sake_lambda*loss_kd
 
-        backward_time_start = time.time()
+        backward_pass_time_start = time.time()
         loss_total.backward()
-        backward_time.update(time.time() - backward_time_start)
+        backward_pass_time.update(time.time() - backward_pass_time_start)
         optimizer.step()
         
         # measure elapsed time
         batch_time.update(time.time() - end)
         end = time.time()
+
+        one_loop_time.update(time.time() - one_loop_time_start)
         
         if i % args.print_freq == 0 or i == len(train_loader)-1:
             print('Epoch: [{0}][{1}/{2}]\t'
@@ -374,8 +376,8 @@ def train(train_loader, train_loader_ext, model, criterion, criterion_kd, \
                    epoch, i, len(train_loader), batch_time=batch_time,
                    loss=losses, loss_kd=losses_kd, top1=top1))
 
-    return {'forward_pass_time': forward_pass_time, 'forward_pass_t_time': forward_pass_t_time,
-            'accuracy_time': accuracy_time, 'backward_time': backward_time}
+    return {'forward_pass_s_time': forward_pass_s_time.avg, 'forward_pass_t_time': forward_pass_t_time.avg,
+            'accuracy_time': accuracy_time.avg, 'backward_pass_time': backward_pass_time.avg}
 
     
 def validate(val_loader, model, criterion, criterion_kd, model_t):
@@ -385,7 +387,7 @@ def validate(val_loader, model, criterion, criterion_kd, model_t):
     top1 = AverageMeter()
     top5 = AverageMeter()
     valid_model_t_time = AverageMeter()
-    valid_model_time = AverageMeter()
+    valid_model_s_time = AverageMeter()
     valid_accuracy_time = AverageMeter()
 
     # switch to evaluate mode
@@ -408,10 +410,10 @@ def validate(val_loader, model, criterion, criterion_kd, model_t):
             valid_model_t_time_start = time.time()
             output_t = model_t(input, zeros)
             valid_model_t_time.update(time.time() - valid_model_t_time_start)
-            valid_model_time_start = time.time()
+            valid_model_s_time_start = time.time()
             output,output_kd = model(input, zeros)
-            valid_model_time.update(time.time() - valid_model_time_start)
-        
+            valid_model_s_time.update(time.time() - valid_model_s_time_start)
+
         loss = criterion(output, target)
         loss_kd = criterion_kd(output_kd, output_t)
         
@@ -441,8 +443,8 @@ def validate(val_loader, model, criterion, criterion_kd, model_t):
     print(' * Acc@1 {top1.avg:.3f} Acc@5 {top5.avg:.3f}'
           .format(top1=top1, top5=top5))
             
-    return top1.avg, {'valid_model_t_time': valid_model_t_time, 'valid_model_time': valid_model_time,
-                      'valid_accuracy_time': valid_accuracy_time}
+    return top1.avg, {'valid_model_t_time': valid_model_t_time.avg, 'valid_model_s_time': valid_model_s_time.avg,
+                      'valid_accuracy_time': valid_accuracy_time.avg}
 
 
 def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
