@@ -284,7 +284,7 @@ def main():
 
 def train(train_loader, train_loader_ext, model, criterion, criterion_kd, \
           optimizer, epoch, model_t):
-    
+    train_setup_time = time.time()
     batch_time = AverageMeter()
     losses = AverageMeter()
     losses_kd = AverageMeter()
@@ -295,11 +295,16 @@ def train(train_loader, train_loader_ext, model, criterion, criterion_kd, \
     accuracy_time = AverageMeter()
     backward_pass_time = AverageMeter()
     one_loop_time = AverageMeter()
+    reformat_data_time = AverageMeter()
+    loss_time = AverageMeter()
+    loss_cleanup_time = AverageMeter()
     
     # switch to train mode
     model.train()
     model_t.eval()
     end = time.time()
+    train_setup_time = time.time() - train_setup_time
+    train_loop_time = time.time()
     for i, ((input, target, cid_mask), (input_ext, target_ext, cid_mask_ext)) in enumerate(zip(train_loader, train_loader_ext)):
         one_loop_time_start = time.time()
         input_all = torch.cat([input, input_ext], dim=0)
@@ -331,7 +336,7 @@ def train(train_loader, train_loader_ext, model, criterion, criterion_kd, \
             tag_all = tag_all.cuda()
             target_all = target_all.cuda()
             cid_mask_all = cid_mask_all.cuda()
-
+        reformat_data_time.update(time.time() - one_loop_time_start)
         forward_pass_s_time_start = time.time()
         output, output_kd = model(input_all, tag_all)
         forward_pass_s_time.update(time.time() - forward_pass_s_time_start)
@@ -340,14 +345,18 @@ def train(train_loader, train_loader_ext, model, criterion, criterion_kd, \
             forward_pass_t_time_start = time.time()
             output_t = model_t(input_all,tag_all)
             forward_pass_t_time.update(time.time() - forward_pass_t_time_start)
-            
+
+        loss_time_start = time.time()
         loss = criterion(output, target_all)
         loss_kd = criterion_kd(output_kd, output_t * args.kd_lambda, tag_all, cid_mask_all * args.kdneg_lambda)
-        
+        loss_time.update(time.time() - loss_time_start)
+
         # measure accuracy and record loss
         accuracy_time_start = time.time()
         acc1, acc5 = accuracy(output, target_all, topk=(1, 5))
         accuracy_time.update(time.time() - accuracy_time_start)
+
+        loss_cleanup_time_start = time.time()
         losses.update(loss.item(), input_all.size(0))
         losses_kd.update(loss_kd.item(), input_ext.size(0))
         top1.update(acc1[0], input_all.size(0))
@@ -356,7 +365,7 @@ def train(train_loader, train_loader_ext, model, criterion, criterion_kd, \
         # compute gradient and do SGD step
         optimizer.zero_grad()
         loss_total = loss+args.sake_lambda*loss_kd
-
+        loss_cleanup_time.update(time.time() - loss_cleanup_time_start)
         backward_pass_time_start = time.time()
         loss_total.backward()
         backward_pass_time.update(time.time() - backward_pass_time_start)
@@ -375,12 +384,17 @@ def train(train_loader, train_loader_ext, model, criterion, criterion_kd, \
                   'Acc@1 {top1.val:.2f} ({top1.avg:.2f})'.format(
                    epoch, i, len(train_loader), batch_time=batch_time,
                    loss=losses, loss_kd=losses_kd, top1=top1))
+    train_loop_time = time.time() - train_loop_time
 
     return {'forward_pass_s_time': forward_pass_s_time.avg, 'forward_pass_t_time': forward_pass_t_time.avg,
-            'accuracy_time': accuracy_time.avg, 'backward_pass_time': backward_pass_time.avg}
+            'accuracy_time': accuracy_time.avg, 'backward_pass_time': backward_pass_time.avg,
+            'one_loop_time': one_loop_time.avg, 'train_setup_time': train_setup_time,
+            'train_loop_time': train_loop_time, 'reformat_data_time': reformat_data_time.avg,
+            'loss_cleanup_time': loss_cleanup_time.avg}
 
     
 def validate(val_loader, model, criterion, criterion_kd, model_t):
+    validate_setup_time = time.time()
     batch_time = AverageMeter()
     losses = AverageMeter()
     losses_kd = AverageMeter()
@@ -389,12 +403,17 @@ def validate(val_loader, model, criterion, criterion_kd, model_t):
     valid_model_t_time = AverageMeter()
     valid_model_s_time = AverageMeter()
     valid_accuracy_time = AverageMeter()
+    valid_reformat_time = AverageMeter()
+    valid_loss_time = AverageMeter()
+    valid_wrapup_time = AverageMeter()
 
     # switch to evaluate mode
     model.eval()
     model_t.eval()
     end = time.time()
+    validate_setup_time = time.time() - validate_setup_time
     for i, (input, target) in enumerate(val_loader):
+        valid_reformat_time_start = time.time()
         input = torch.autograd.Variable(input, requires_grad=False)
         target = target.type(torch.LongTensor).view(-1,)
         target = torch.autograd.Variable(target)
@@ -407,21 +426,23 @@ def validate(val_loader, model, criterion, criterion_kd, model_t):
             zeros = torch.zeros(input.size()[0],1)
             if torch.cuda.is_available():
                 zeros = zeros.cuda()
+            valid_reformat_time.update(time.time() - valid_reformat_time_start)
             valid_model_t_time_start = time.time()
             output_t = model_t(input, zeros)
             valid_model_t_time.update(time.time() - valid_model_t_time_start)
             valid_model_s_time_start = time.time()
             output,output_kd = model(input, zeros)
             valid_model_s_time.update(time.time() - valid_model_s_time_start)
-
+        valid_loss_time_start = time.time()
         loss = criterion(output, target)
         loss_kd = criterion_kd(output_kd, output_t)
-        
+        valid_loss_time.update(time.time() - valid_loss_time_start)
 
         # measure accuracy and record loss
         valid_accuracy_time_start = time.time()
         acc1, acc5 = accuracy(output, target, topk=(1, 5))
         valid_accuracy_time.update(time.time() - valid_accuracy_time_start)
+        valid_wrapup_time_start = time.time()
         losses.update(loss.item(), input.size(0))
         losses_kd.update(loss_kd.item(), input.size(0))
         top1.update(acc1[0], input.size(0))
@@ -439,12 +460,15 @@ def validate(val_loader, model, criterion, criterion_kd, model_t):
                   'Acc@5 {top5.val:.2f} ({top5.avg:.2f})'.format(
                    i, len(val_loader), batch_time=batch_time, loss=losses, loss_kd=losses_kd, 
                    top1=top1, top5=top5))
+        valid_wrapup_time.update(time.time() - valid_wrapup_time_start)
 
     print(' * Acc@1 {top1.avg:.3f} Acc@5 {top5.avg:.3f}'
           .format(top1=top1, top5=top5))
             
     return top1.avg, {'valid_model_t_time': valid_model_t_time.avg, 'valid_model_s_time': valid_model_s_time.avg,
-                      'valid_accuracy_time': valid_accuracy_time.avg}
+                      'valid_accuracy_time': valid_accuracy_time.avg, 'valid_setup_time': validate_setup_time,
+                      'valid_reformat_time': valid_reformat_time.avg, 'valid_loss_time': valid_loss_time.avg,
+                      'valid_wrapup_time': valid_wrapup_time.avg}
 
 
 def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
