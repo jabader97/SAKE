@@ -386,13 +386,14 @@ def train(train_loader, train_loader_ext, model, criterion, criterion_kd, \
                   'Acc@1 {top1.val:.2f} ({top1.avg:.2f})'.format(
                    epoch, i, len(train_loader), batch_time=batch_time,
                    loss=losses, loss_kd=losses_kd, top1=top1))
+
     train_loop_time = time.time() - train_loop_time
 
     return {'forward_pass_s_time': forward_pass_s_time.avg, 'forward_pass_t_time': forward_pass_t_time.avg,
             'accuracy_time': accuracy_time.avg, 'backward_pass_time': backward_pass_time.avg,
             'one_loop_time': one_loop_time.avg, 'train_setup_time': train_setup_time,
             'train_loop_time': train_loop_time, 'reformat_data_time': reformat_data_time.avg,
-            'loss_cleanup_time': loss_cleanup_time.avg, 'get_item_time': get_item_time.avg}
+            'loss_cleanup_time': loss_cleanup_time.avg, 'get_item_time': get_item_time.avg.item()}
 
     
 def validate(val_loader, model, criterion, criterion_kd, model_t):
@@ -472,7 +473,7 @@ def validate(val_loader, model, criterion, criterion_kd, model_t):
     return top1.avg, {'valid_model_t_time': valid_model_t_time.avg, 'valid_model_s_time': valid_model_s_time.avg,
                       'valid_accuracy_time': valid_accuracy_time.avg, 'valid_setup_time': validate_setup_time,
                       'valid_reformat_time': valid_reformat_time.avg, 'valid_loss_time': valid_loss_time.avg,
-                      'valid_wrapup_time': valid_wrapup_time.avg, 'valid_getitem_time': valid_getitem_time.avg}
+                      'valid_wrapup_time': valid_wrapup_time.avg, 'valid_getitem_time': valid_getitem_time.avg.item()}
 
 
 def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
