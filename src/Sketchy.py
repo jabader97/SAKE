@@ -1,4 +1,6 @@
 import os,cv2
+import time
+
 import numpy as np
 from torch.utils.data import Dataset
 from skimage.transform import warp, AffineTransform
@@ -81,6 +83,7 @@ class SketchyDataset(Dataset):
         return len(self.labels)
 
     def __getitem__(self, idx):
+        get_item_time = time.time()
         # fix path name
         file_name = self.file_ls[idx]
         file_parts = file_name.split("/")
@@ -101,8 +104,6 @@ class SketchyDataset(Dataset):
         file_parts = join_symbol.join(file_parts)
         img = cv2.imread(os.path.join(os.path.join(self.img_dir, self.dataset, file_parts)))[:,:,::-1]
 
-
-
         if self.aug and np.random.random()<0.7:
             img = random_transform(img)
 
@@ -113,10 +114,9 @@ class SketchyDataset(Dataset):
         
         if self.cid_mask:
             mask = self.cid_matrix[label]
-            return img, label, mask
+            return img, label, mask, time.time() - get_item_time
 
-        return img, label
-    
+        return img, label, time.time() - get_item_time
     
     def shuffle(self):
         s_idx = np.random.shuffle(np.arange(len(self.labels)))

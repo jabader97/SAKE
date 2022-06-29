@@ -298,6 +298,7 @@ def train(train_loader, train_loader_ext, model, criterion, criterion_kd, \
     reformat_data_time = AverageMeter()
     loss_time = AverageMeter()
     loss_cleanup_time = AverageMeter()
+    get_item_time = AverageMeter()
     
     # switch to train mode
     model.train()
@@ -305,7 +306,8 @@ def train(train_loader, train_loader_ext, model, criterion, criterion_kd, \
     end = time.time()
     train_setup_time = time.time() - train_setup_time
     train_loop_time = time.time()
-    for i, ((input, target, cid_mask), (input_ext, target_ext, cid_mask_ext)) in enumerate(zip(train_loader, train_loader_ext)):
+    for i, ((input, target, cid_mask, ti), (input_ext, target_ext, cid_mask_ext, ti_ext)) in enumerate(zip(train_loader, train_loader_ext)):
+        get_item_time.update(ti.sum() + ti_ext.sum())
         one_loop_time_start = time.time()
         input_all = torch.cat([input, input_ext], dim=0)
         tag_zeros = torch.zeros(input.size()[0], 1)
@@ -390,7 +392,7 @@ def train(train_loader, train_loader_ext, model, criterion, criterion_kd, \
             'accuracy_time': accuracy_time.avg, 'backward_pass_time': backward_pass_time.avg,
             'one_loop_time': one_loop_time.avg, 'train_setup_time': train_setup_time,
             'train_loop_time': train_loop_time, 'reformat_data_time': reformat_data_time.avg,
-            'loss_cleanup_time': loss_cleanup_time.avg}
+            'loss_cleanup_time': loss_cleanup_time.avg, 'get_item_time': get_item_time.avg}
 
     
 def validate(val_loader, model, criterion, criterion_kd, model_t):
@@ -406,13 +408,15 @@ def validate(val_loader, model, criterion, criterion_kd, model_t):
     valid_reformat_time = AverageMeter()
     valid_loss_time = AverageMeter()
     valid_wrapup_time = AverageMeter()
+    valid_getitem_time = AverageMeter()
 
     # switch to evaluate mode
     model.eval()
     model_t.eval()
     end = time.time()
     validate_setup_time = time.time() - validate_setup_time
-    for i, (input, target) in enumerate(val_loader):
+    for i, (input, target, ti) in enumerate(val_loader):
+        valid_getitem_time.update(ti.sum())
         valid_reformat_time_start = time.time()
         input = torch.autograd.Variable(input, requires_grad=False)
         target = target.type(torch.LongTensor).view(-1,)
@@ -468,7 +472,7 @@ def validate(val_loader, model, criterion, criterion_kd, model_t):
     return top1.avg, {'valid_model_t_time': valid_model_t_time.avg, 'valid_model_s_time': valid_model_s_time.avg,
                       'valid_accuracy_time': valid_accuracy_time.avg, 'valid_setup_time': validate_setup_time,
                       'valid_reformat_time': valid_reformat_time.avg, 'valid_loss_time': valid_loss_time.avg,
-                      'valid_wrapup_time': valid_wrapup_time.avg}
+                      'valid_wrapup_time': valid_wrapup_time.avg, 'valid_getitem_time': valid_getitem_time.avg}
 
 
 def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
