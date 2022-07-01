@@ -393,7 +393,8 @@ def train(train_loader, train_loader_ext, model, criterion, criterion_kd, \
             'accuracy_time': accuracy_time.avg, 'backward_pass_time': backward_pass_time.avg,
             'one_loop_time': one_loop_time.avg, 'train_setup_time': train_setup_time,
             'train_loop_time': train_loop_time, 'reformat_data_time': reformat_data_time.avg,
-            'loss_cleanup_time': loss_cleanup_time.avg, 'get_item_time': get_item_time.avg.item()}
+            'loss_cleanup_time': loss_cleanup_time.avg, 'get_item_time': get_item_time.avg.item(),
+            'loss_time': loss_time.avg}
 
     
 def validate(val_loader, model, criterion, criterion_kd, model_t):
