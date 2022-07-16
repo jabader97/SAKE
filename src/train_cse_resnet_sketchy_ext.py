@@ -251,7 +251,7 @@ def main():
                     criterion_train = criterion_train.cuda()
 
         train_one_epoch_time = time.time()
-        train_time_log = train(train_loader, train_loader_ext, model, criterion_train, criterion_train_kd, \
+        train_data, train_time_log = train(train_loader, train_loader_ext, model, criterion_train, criterion_train_kd, \
               optimizer, epoch, model_t)
         time_log['train_one_epoch_time'] = time.time() - train_one_epoch_time
         valid_time = time.time()
@@ -271,6 +271,7 @@ def main():
         }, is_best, filename = os.path.join(args.savedir,'checkpoint.pth.tar'))
         time_log['save_checkpoint_time'] = time.time() - save_time
         if args.log_online:
+            wandb.log(train_data)
             valid_data = {'top1': acc1}
             wandb.log(valid_data)
             for key in train_time_log.keys():
@@ -282,8 +283,7 @@ def main():
             wandb.log(time_log)
         
 
-def train(train_loader, train_loader_ext, model, criterion, criterion_kd, \
-          optimizer, epoch, model_t):
+def train(train_loader, train_loader_ext, model, criterion, criterion_kd, optimizer, epoch, model_t):
     train_setup_time = time.time()
     batch_time = AverageMeter()
     losses = AverageMeter()
@@ -389,7 +389,7 @@ def train(train_loader, train_loader_ext, model, criterion, criterion_kd, \
 
     train_loop_time = time.time() - train_loop_time
 
-    return {'forward_pass_s_time': forward_pass_s_time.avg, 'forward_pass_t_time': forward_pass_t_time.avg,
+    return {'Acc@1_train': top1.avg, 'Acc@5_train': top5.avg}, {'forward_pass_s_time': forward_pass_s_time.avg, 'forward_pass_t_time': forward_pass_t_time.avg,
             'accuracy_time': accuracy_time.avg, 'backward_pass_time': backward_pass_time.avg,
             'one_loop_time': one_loop_time.avg, 'train_setup_time': train_setup_time,
             'train_loop_time': train_loop_time, 'reformat_data_time': reformat_data_time.avg,
