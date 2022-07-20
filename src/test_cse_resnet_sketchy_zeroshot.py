@@ -20,6 +20,8 @@ import warnings
 import pretrainedmodels
 import torch.nn.functional as F
 from ResnetModel import CSEResnetModel_KD, CSEResnetModel_KDHashing
+import utils
+import wandb
 from test_cse_resnet_tuberlin_zeroshot import eval_precision, VOCap, eval_AP_inner
 # warnings.filterwarnings("error")
 
@@ -98,76 +100,74 @@ def main():
         predicted_features_query, gt_labels_query, \
         scores = prepare_features()
         
-    mAP_ls = [[] for _ in range(len(np.unique(gt_labels_query)))]
-    for fi in range(predicted_features_query.shape[0]):
-        mapi = eval_AP_inner(gt_labels_query[fi], scores[fi], gt_labels_gallery)
-        mAP_ls[gt_labels_query[fi]].append(mapi)
-        
-    for mAPi,mAPs in enumerate(mAP_ls):
-        print(str(mAPi)+' '+str(np.nanmean(mAPs))+' '+str(np.nanstd(mAPs)))
-        
-    prec_ls = [[] for _ in range(len(np.unique(gt_labels_query)))]
-    for fi in range(predicted_features_query.shape[0]):
-        prec = eval_precision(gt_labels_query[fi], scores[fi], gt_labels_gallery)
-        prec_ls[gt_labels_query[fi]].append(prec)
-        
-    if args.precision:
-        for preci,precs in enumerate(prec_ls):
-            print(str(preci)+' '+str(np.nanmean(precs))+' '+str(np.nanstd(precs)))
-        
-    ################ PBIR
-        
-    feature_file = os.path.join(args.resume_dir, 'features_photo.pickle')
-    if os.path.isfile(feature_file):
-        print('load saved PBIR features')
-        with open(feature_file, 'rb') as fh:
-            predicted_features_gallery, gt_labels_gallery, \
-            predicted_features_query, gt_labels_query, \
-            scores = pickle.load(fh)
-
-        if scores is None:
-            scores = - cdist(predicted_features_query, predicted_features_gallery)
-
-    else:
-        print('prepare PBIR features')
-        predicted_features_gallery, gt_labels_gallery, \
-        predicted_features_query, gt_labels_query, \
-        scores = prepare_pbir_features(predicted_features_gallery, gt_labels_gallery)
-
+    # mAP_ls = [[] for _ in range(len(np.unique(gt_labels_query)))]
+    # for fi in range(predicted_features_query.shape[0]):
+    #     mapi = eval_AP_inner(gt_labels_query[fi], scores[fi], gt_labels_gallery)
+    #     mAP_ls[gt_labels_query[fi]].append(mapi)
+    #
+    # for mAPi,mAPs in enumerate(mAP_ls):
+    #     print(str(mAPi)+' '+str(np.nanmean(mAPs))+' '+str(np.nanstd(mAPs)))
+    #
+    # prec_ls = [[] for _ in range(len(np.unique(gt_labels_query)))]
+    # for fi in range(predicted_features_query.shape[0]):
+    #     prec = eval_precision(gt_labels_query[fi], scores[fi], gt_labels_gallery)
+    #     prec_ls[gt_labels_query[fi]].append(prec)
+    #
+    # if args.precision:
+    #     for preci,precs in enumerate(prec_ls):
+    #         print(str(preci)+' '+str(np.nanmean(precs))+' '+str(np.nanstd(precs)))
+    #
+    # ################ PBIR
+    #
+    # feature_file = os.path.join(args.resume_dir, 'features_photo.pickle')
+    # if os.path.isfile(feature_file):
+    #     print('load saved PBIR features')
+    #     with open(feature_file, 'rb') as fh:
+    #         predicted_features_gallery, gt_labels_gallery, \
+    #         predicted_features_query, gt_labels_query, \
+    #         scores = pickle.load(fh)
+    #
+    #     if scores is None:
+    #         scores = - cdist(predicted_features_query, predicted_features_gallery)
+    #
+    # else:
+    #     print('prepare PBIR features')
+    #     predicted_features_gallery, gt_labels_gallery, \
+    #     predicted_features_query, gt_labels_query, \
+    #     scores = prepare_pbir_features(predicted_features_gallery, gt_labels_gallery)
+    #
+    # if args.log_online:
+    #     import wandb
+    #     _ = os.system('wandb login {}'.format(args.wandb_key))
+    #     os.environ['WANDB_API_KEY'] = args.wandb_key
+    #     save_path = os.path.join(args.path_aux, 'CheckPoints', 'wandb')
+    #     wandb.init(project=args.project, group=args.group, name=args.savename, dir=save_path,
+    #                settings=wandb.Settings(start_method='fork'))
+    #     wandb.config.update(vars(args))
+    #
+    # mAP_ls = [[] for _ in range(len(np.unique(gt_labels_query)))]
+    # for fi in range(predicted_features_query.shape[0]):
+    #     mapi = eval_AP_inner(gt_labels_query[fi], scores[fi], gt_labels_gallery)
+    #     mAP_ls[gt_labels_query[fi]].append(mapi)
+    #
+    # for mAPi,mAPs in enumerate(mAP_ls):
+    #     print(str(mAPi)+' '+str(np.nanmean(mAPs))+' '+str(np.nanstd(mAPs)))
+    #
+    # prec_ls = [[] for _ in range(len(np.unique(gt_labels_query)))]
+    # for fi in range(predicted_features_query.shape[0]):
+    #     prec = eval_precision(gt_labels_query[fi], scores[fi], gt_labels_gallery)
+    #     prec_ls[gt_labels_query[fi]].append(prec)
+    #
+    # if args.precision:
+    #     for preci,precs in enumerate(prec_ls):
+    #         print(str(preci)+' '+str(np.nanmean(precs))+' '+str(np.nanstd(precs)))
+    str_sim = (np.expand_dims(predicted_features_gallery, axis=1) == np.expand_dims(predicted_features_query, axis=0)) * 1
+    apsall = utils.apsak(scores, str_sim)
+    aps200 = utils.apsak(scores, str_sim, k=200)
+    prec100, _ = utils.precak(scores, str_sim, k=100)
+    prec200, _ = utils.precak(scores, str_sim, k=200)
     if args.log_online:
-        import wandb
-        _ = os.system('wandb login {}'.format(args.wandb_key))
-        os.environ['WANDB_API_KEY'] = args.wandb_key
-        save_path = os.path.join(args.path_aux, 'CheckPoints', 'wandb')
-        wandb.init(project=args.project, group=args.group, name=args.savename, dir=save_path,
-                   settings=wandb.Settings(start_method='fork'))
-        wandb.config.update(vars(args))
-    
-    mAP_ls = [[] for _ in range(len(np.unique(gt_labels_query)))]
-    for fi in range(predicted_features_query.shape[0]):
-        mapi = eval_AP_inner(gt_labels_query[fi], scores[fi], gt_labels_gallery)
-        mAP_ls[gt_labels_query[fi]].append(mapi)
-        
-    for mAPi,mAPs in enumerate(mAP_ls):
-        print(str(mAPi)+' '+str(np.nanmean(mAPs))+' '+str(np.nanstd(mAPs)))
-        
-    prec_ls = [[] for _ in range(len(np.unique(gt_labels_query)))]
-    for fi in range(predicted_features_query.shape[0]):
-        prec = eval_precision(gt_labels_query[fi], scores[fi], gt_labels_gallery)
-        prec_ls[gt_labels_query[fi]].append(prec)
-        
-    if args.precision:
-        for preci,precs in enumerate(prec_ls):
-            print(str(preci)+' '+str(np.nanmean(precs))+' '+str(np.nanstd(precs)))
-    if args.log_online:
-        valid_data = {}
-        for mAPi, mAPs in enumerate(mAP_ls):
-            valid_data['mAPi_mean' + str(mAPi)] = np.nanmean(mAPs)
-            valid_data['mAPi_std' + str(mAPi)] = np.nanstd(mAPs)
-        if args.precision:
-            for preci, precs in enumerate(prec_ls):
-                valid_data['preci_mean' + str(preci)] = np.nanmean(precs)
-                valid_data['preci_std' + str(preci)] = np.nanstd(precs)
+        valid_data = {"test_aps@all": apsall, "test_aps@200": aps200, "test_prec@100": prec100, "test_prec@200": prec200}
         wandb.log(valid_data)
 
 
