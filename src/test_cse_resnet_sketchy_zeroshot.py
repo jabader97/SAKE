@@ -168,6 +168,7 @@ def main():
             for preci, precs in enumerate(prec_ls):
                 valid_data['preci_mean' + str(preci)] = np.nanmean(precs)
                 valid_data['preci_std' + str(preci)] = np.nanstd(precs)
+        wandb.log(valid_data)
 
 
 def prepare_pbir_features(predicted_features_ext, gt_labels_ext):
@@ -292,7 +293,7 @@ def get_features(data_loader, model, tag=1):
     avgpool = nn.AdaptiveAvgPool2d(1)
     if torch.cuda.is_available():
         avgpool = avgpool.cuda()
-    for i, (input, target) in enumerate(data_loader):
+    for i, (input, target, _) in enumerate(data_loader):
         if i%10==0:
             print(i, end=' ', flush=True)
         
