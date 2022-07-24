@@ -84,6 +84,19 @@ def main():
             args.savename = ''
     if args.zero_version == 'zeroshot2':
         args.num_classes = 104
+        
+    if args.log_online:
+        import wandb
+        _ = os.system('wandb login {}'.format(args.wandb_key))
+        os.environ['WANDB_API_KEY'] = args.wandb_key
+        save_path = os.path.join(args.path_aux, 'CheckPoints', 'wandb')
+        project = args.project
+        group = args.group
+        savename = args.savename + '_s1'
+        # wandb.init(project=project, group=group, name=savename, dir=save_path,
+        #            settings=wandb.Settings(start_method='fork'))
+        wandb.init(project=project, group=group, name=savename, dir=save_path)
+        wandb.config.update(vars(args))
 
     print('prepare SBIR features using saved model')
     apsall, aps200, prec100, prec200 = prepare_features()
